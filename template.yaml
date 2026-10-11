@@ -4,9 +4,9 @@ Description: Tankwise - rain-aware water tanker planning prototype (API Gateway 
 
 Parameters:
   AllowedOrigin:
-    Type: String
+    Type: CommaDelimitedList
     Default: '*'
-    Description: Browser origin allowed by CORS (e.g. https://your-frontend.example). Comma-separate several origins. '*' is fine for a hackathon demo. Also passed to the Lambda as ALLOWED_ORIGIN.
+    Description: Browser origins allowed by CORS (e.g. https://your-frontend.example). Comma-separate several origins; spaces after commas are trimmed. '*' is fine for a hackathon demo. The list is passed to the Lambda as ALLOWED_ORIGIN (comma-separated).
 
 Globals:
   Function:
@@ -25,8 +25,10 @@ Resources:
         ThrottlingBurstLimit: 20
         ThrottlingRateLimit: 10
       CorsConfiguration:
-        AllowOrigins:
-          - !Ref AllowedOrigin
+        # One list item per origin: API Gateway rejects a single item that holds
+        # several comma-separated origins, so the parameter is a comma-delimited
+        # list and is passed through as a list here.
+        AllowOrigins: !Ref AllowedOrigin
         AllowHeaders:
           - content-type
         AllowMethods:
@@ -41,7 +43,7 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref WaterPlanTable
-          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          ALLOWED_ORIGIN: !Join [',', !Ref AllowedOrigin]
       Policies:
         - Version: '2012-10-17'
           Statement:

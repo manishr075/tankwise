@@ -1,5 +1,7 @@
 # Tankwise
 
+[![CI](https://github.com/manishr075/tankwise/actions/workflows/ci.yml/badge.svg)](https://github.com/manishr075/tankwise/actions/workflows/ci.yml)
+
 **When should this building book its next water tanker?** Tankwise is a rain-aware tanker-planning tool for one hostel, PG or housing building. It projects the tank day by day from current stock, daily use, supplier lead time and roof rain capture, gives a latest safe booking day, and always shows a **no-rain stress test** next to the forecast case. Decisions (exact inputs + recalculated output) are saved to Amazon DynamoDB through API Gateway + Lambda.
 
 > Hackathon prototype, not a certified water-management system. Example values are not measured building data, forecast rain is not guaranteed, and collected rain is not assumed drinkable.
@@ -37,6 +39,12 @@ npm run dev        # http://localhost:5173
 
 With no `VITE_API_BASE_URL`, the header says **Preview mode · no AWS configured**: calculations run in the browser and saves go only to browser localStorage, labelled as such.
 
+`npm run dev` and `npm run preview` bind `0.0.0.0` and answer any `Host` header, so the page also opens from a phone on the same Wi-Fi, a hosted preview or a tunnel URL (Vite normally answers 403 "Blocked request" to a host it was not started with). On a shared network, narrow the accepted hosts with `VITE_ALLOWED_HOSTS`:
+
+```bash
+cd frontend && VITE_ALLOWED_HOSTS=.example.com npm run dev   # only *.example.com
+```
+
 Backend and parity checks (start at the project root). Install the optional test dependencies, run the backend tests from the `backend/` directory so Python can import `app` and `water_balance`, then return to the project root for parity:
 
 ```bash
@@ -56,6 +64,17 @@ cd frontend && VITE_API_BASE_URL=http://127.0.0.1:8787 npm run dev
 
 The header then reads **Local API mock · not AWS** and saved records are badged "Local mock".
 
+## Checks (CI)
+
+`.github/workflows/ci.yml` runs the same commands as above on every push and pull request, and nothing in it touches AWS (`moto`'s DynamoDB is in-process, no credentials):
+
+| Job | Command | What it proves |
+| --- | --- | --- |
+| Frontend | `npm ci && npm test && npm run build` | 32 tests pass and `dist/` builds |
+| Backend | `python -m unittest discover -s tests -v` in `backend/` | 37 model and handler tests pass, including the moto DynamoDB round trip |
+| Parity | `python scripts/check_parity.py` | `engine.js` and `water_balance.py` agree on 27 edge cases + 2,000 seeded scenarios |
+| Template | `cfn-lint template.yaml` | The SAM template parses and passes lint (not a substitute for `sam validate --lint`) |
+
 ## Deploy to AWS (ap-south-1 suggested)
 
 Needs AWS CLI credentials on your own machine (`aws configure` or `aws sso login`) and the SAM CLI. Never paste keys into chat, the frontend, or Git.
@@ -66,7 +85,7 @@ sam build                       # needs python3.12 on PATH (or: sam build --use-
 sam deploy --guided             # defaults come from samconfig.toml; confirm the changeset
 ```
 
-Optional: lock CORS to your frontend host with `--parameter-overrides AllowedOrigin=https://your-frontend.example` (comma-separate several origins). The `AllowedOrigin` value is passed to the Lambda as `ALLOWED_ORIGIN`, which sets `Access-Control-Allow-Origin` on every response. Unset or `*` keeps the open hackathon default. This takes effect on the next deployment; the current stack has not been redeployed with this change.
+Optional: lock CORS to your frontend host with `--parameter-overrides AllowedOrigin=https://your-frontend.example`. The value is a comma-separated list, so several origins can be allowed in one deploy: pass the whole list as a single shell word (`--parameter-overrides "AllowedOrigin=https://a.example,https://b.example"` or the `ParameterKey=AllowedOrigin,ParameterValue=...` form). The list is passed to the Lambda as `ALLOWED_ORIGIN`, which sets `Access-Control-Allow-Origin` on every response, and to API Gateway as one `AllowOrigins` entry per origin. Unset or `*` keeps the open hackathon default. This takes effect on the next deployment; the current stack has not been redeployed with this change.
 
 **Windows PowerShell helper:** after installing the AWS CLI and SAM CLI, signing in with `aws configure` or `aws sso login`, and ensuring Python 3.12 is available for SAM, run this from the project root:
 
