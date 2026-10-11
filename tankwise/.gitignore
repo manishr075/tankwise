@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.aws-sam/
+.DS_Store
+
+# local tooling
+.aws-sam/
+samconfig.local.toml

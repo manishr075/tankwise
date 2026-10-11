@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Tankwise - rain-aware water tanker planning prototype (API Gateway HTTP API + Lambda + DynamoDB)
+
+Parameters:
+  AllowedOrigin:
+    Type: String
+    Default: '*'
+    Description: Browser origin allowed by CORS (e.g. https://your-frontend.example). '*' is fine for a hackathon demo.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Handler: app.handler
+    CodeUri: backend/
+    MemorySize: 256
+    Timeout: 15
+
+Resources:
+  TankwiseApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: '$default'
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref AllowedOrigin
+        AllowHeaders:
+          - content-type
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        MaxAge: 600
+
+  TankwiseFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref WaterPlanTable
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Sid: SaveAndReadPlans
+              Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:Query
+              Resource: !GetAtt WaterPlanTable.Arn
+      Events:
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TankwiseApi
+            Path: /health
+            Method: GET
+        Simulate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TankwiseApi
+            Path: /simulate
+            Method: POST
+        SaveRecord:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TankwiseApi
+            Path: /records
+            Method: POST
+        History:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TankwiseApi
+            Path: /history
+            Method: GET
+
+  TankwiseFunctionLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${TankwiseFunction}'
+      RetentionInDays: 14
+
+  WaterPlanTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: building_id
+          AttributeType: S
+        - AttributeName: sort_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: building_id
+          KeyType: HASH
+        - AttributeName: sort_key
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+
+Outputs:
+  TankwiseApiUrl:
+    Description: API Gateway base URL for Tankwise (set as VITE_API_BASE_URL)
+    Value: !Sub 'https://${TankwiseApi}.execute-api.${AWS::Region}.amazonaws.com'
+  TankwiseHealthUrl:
+    Description: Health check that also verifies DynamoDB access
+    Value: !Sub 'https://${TankwiseApi}.execute-api.${AWS::Region}.amazonaws.com/health'
+  WaterPlanTableName:
+    Description: DynamoDB table for saved water plans
+    Value: !Ref WaterPlanTable
