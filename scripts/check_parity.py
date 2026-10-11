@@ -38,6 +38,7 @@ EDGE_CASES = {
     "already below reserve": {**BASE, "currentStockLiters": 1000},
     "no forecast days": {**BASE, "forecastMm": []},
     "no rain": {**BASE, "forecastMm": [0] * 7},
+    "late rain days 8-14": {**BASE, "currentStockLiters": 8000, "dailyConsumptionLiters": 500, "leadTimeDays": 0, "safetyStockLiters": 1800, "forecastMm": [0] * 9 + [20] + [0] * 4},
     "extreme rain": {**BASE, "forecastMm": [500] * 14},
     "tank overflow": {**BASE, "currentStockLiters": 9900, "forecastMm": [80, 0, 0]},
     "demand exceeds stock": {**BASE, "currentStockLiters": 900, "safetyStockLiters": 0},

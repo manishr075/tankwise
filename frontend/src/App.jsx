@@ -4,7 +4,7 @@ import {
   Droplets, History, LoaderCircle, MapPin, RefreshCw, Save, ShieldCheck, Truck, Waves,
 } from 'lucide-react';
 import { DEFAULT_INPUTS, simulateWaterBalance, upcomingDates, validateInputs } from './engine.js';
-import { API_BASE_URL, apiRegion, apiRequest, fetchRainForecast } from './api.js';
+import { API_BASE_URL, FORECAST_DAYS, apiRegion, apiRequest, fetchRainForecast } from './api.js';
 import { dateAt, dayLabel, days, fmt, fmtOne, relativeDay, shortDate } from './format.js';
 
 const HISTORY_KEY = 'tankwise-preview-history-v2';
@@ -75,6 +75,8 @@ export default function App() {
   const [history, setHistory] = useState(() => (API_BASE_URL ? [] : readLocalHistory()));
   const [historyState, setHistoryState] = useState(API_BASE_URL ? 'idle' : 'browser');
   const [activeTab, setActiveTab] = useState('forecast');
+  const calcSeq = useRef(0);
+  const calcAbort = useRef(null);
 
   const cloudReady = apiStatus === 'connected' || apiStatus === 'local-mock';
   const update = (key, value) => setInputs((prev) => ({ ...prev, [key]: value }));
@@ -106,6 +108,13 @@ export default function App() {
 
   // Runs the model via AWS Lambda when connected, otherwise in the browser.
   const calculate = useCallback(async (nextInputs, { dates, source, ready, quiet = false } = {}) => {
+    // Newer calculations supersede older ones: abort the in-flight request and ignore late replies.
+    const seq = calcSeq.current + 1;
+    calcSeq.current = seq;
+    calcAbort.current?.abort();
+    const controller = new AbortController();
+    calcAbort.current = controller;
+    const isCurrent = () => seq === calcSeq.current;
     setBusyCalculate(true);
     setError('');
     if (!quiet) setNotice('');
@@ -115,25 +124,29 @@ export default function App() {
       let calculatedBy = 'browser';
       if (ready) {
         try {
-          const response = await apiRequest('/simulate', { method: 'POST', body: nextInputs });
+          const response = await apiRequest('/simulate', { method: 'POST', body: nextInputs, signal: controller.signal });
+          if (!isCurrent()) return false;
           recordCloud('POST', '/simulate', response, response.ok ? 'calculated by Lambda' : '');
           if (response.status === 400) throw Object.assign(new Error(errorText(response, 'Invalid input')), { validation: true });
           if (!response.ok || !response.data?.result) throw new Error(errorText(response, 'Simulation failed'));
           result = response.data.result;
           calculatedBy = response.data.calculatedBy === 'aws-lambda' ? 'aws-lambda' : 'local-mock';
         } catch (cloudError) {
+          if (!isCurrent()) return false;
           if (cloudError.validation) throw cloudError;
           setApiStatus('offline');
           setNotice(`AWS calculation failed (${cloudError.message}). Showing the browser calculation instead; saves are browser-only until AWS reconnects.`);
         }
       }
+      if (!isCurrent()) return false;
       setPlan({ inputs: nextInputs, dates, source, result, calculatedBy });
       return true;
     } catch (calculationError) {
+      if (!isCurrent()) return false;
       setError(`${calculationError.message || 'Could not calculate this scenario.'} The plan below still shows the last valid calculation.`);
       return false;
     } finally {
-      setBusyCalculate(false);
+      if (isCurrent()) setBusyCalculate(false);
     }
   }, []);
 
@@ -191,7 +204,9 @@ export default function App() {
       const total = forecast.rainfallMm.reduce((sum, mm) => sum + mm, 0);
       setWeather({
         state: 'ok',
-        message: `Loaded ${forecast.dates.length} days (${fmtOne(total)} mm total)${forecast.missingDays ? `; ${forecast.missingDays} missing day(s) treated as 0 mm` : ''}.`,
+        message: `Loaded ${forecast.dates.length}-day forecast (${fmtOne(total)} mm total)`
+          + (forecast.dates.length < FORECAST_DAYS ? `; Open-Meteo returned fewer than ${FORECAST_DAYS} days, so later days count as 0 mm` : '')
+          + (forecast.missingDays ? `; ${forecast.missingDays} missing day(s) treated as 0 mm` : '') + '.',
       });
       await calculate(nextInputs, { dates: forecast.dates, source, ready: cloudReady });
     } catch (weatherError) {
@@ -325,7 +340,7 @@ export default function App() {
           {inputsAreDirty && <div className="dirty-note" role="status"><Activity size={14} aria-hidden="true" /> Inputs changed. These numbers are for the previous inputs. Press <b>Recalculate</b> to update them.</div>}
           <div className="decision-topline">
             <span className={`urgency-tag ${result.urgency}`}><UrgencyIcon size={14} aria-hidden="true" /> {urgencyLabel}</span>
-            <span className="calc-by">{plan.calculatedBy === 'aws-lambda' ? `Calculated by AWS Lambda${REGION ? ` (${REGION})` : ''}` : plan.calculatedBy === 'local-mock' ? 'Calculated by local API mock (not AWS)' : 'Calculated in this browser'}</span>
+            <span className="calc-by" role="status">{busyCalculate ? 'Recalculating…' : plan.calculatedBy === 'aws-lambda' ? `Calculated by AWS Lambda${REGION ? ` (${REGION})` : ''}` : plan.calculatedBy === 'local-mock' ? 'Calculated by local API mock (not AWS)' : 'Calculated in this browser'}</span>
           </div>
           <h1 id="decision-heading">{headline}</h1>
           <p className="decision-copy">{result.recommendation}</p>
@@ -396,10 +411,10 @@ export default function App() {
               </div>
               <button type="button" className="button button-secondary button-full" onClick={loadWeather} disabled={weather.state === 'loading' || busyCalculate}>
                 {weather.state === 'loading' ? <LoaderCircle className="spin" size={16} aria-hidden="true" /> : <CloudRain size={16} aria-hidden="true" />}
-                {weather.state === 'loading' ? 'Loading forecast…' : 'Load live 7-day rainfall'}
+                {weather.state === 'loading' ? 'Loading forecast…' : 'Load live 14-day rainfall'}
               </button>
               <p className={`inline-status ${weather.state}`} role="status">{weather.message || `Using: ${forecastSource}`}</p>
-              <p className="subtle-note">Daily precipitation from Open-Meteo. Days beyond the forecast count as 0 mm.</p>
+              <p className="subtle-note">Daily precipitation from Open-Meteo (14-day forecast). Days beyond day 14 count as 0 mm.</p>
             </fieldset>
             <button type="submit" className="button button-primary button-full" disabled={busyCalculate}>
               {busyCalculate ? <LoaderCircle className="spin" size={16} aria-hidden="true" /> : <Activity size={16} aria-hidden="true" />}
@@ -481,13 +496,18 @@ export default function App() {
                 const out = record.output || {};
                 const rIn = record.input || {};
                 const dates = record.forecast_dates?.length ? record.forecast_dates : upcomingDates(7, new Date(record.created_at));
-                const when = out.forecastDeadlineDays === null || out.forecastDeadlineDays === undefined ? 'book now' : `book by ${dayLabel(dates, out.forecastDeadlineDays)}`;
+                const deadlineText = (value) => (value === null || value === undefined ? 'Now' : value >= max ? `${max}+ days` : dayLabel(dates, value));
+                const forecastBy = deadlineText(out.forecastDeadlineDays);
+                const noRainBy = deadlineText(out.noRainDeadlineDays);
                 return (
                   <li key={record.record_id || record.created_at}>
                     <button type="button" className="history-item" onClick={() => loadScenario(record)}>
                       <span className={`storage-badge ${record.storage === 'browser' ? 'browser' : 'cloud'}`}>{{ browser: 'Browser', 'local-mock': 'Local mock' }[record.storage] || 'DynamoDB'}</span>
                       <span className="history-main"><strong>{record.building_id || rIn.buildingName || 'Saved plan'}</strong><small>{new Date(record.created_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })} · {String(record.forecast_source || '').split(' · ')[0]}</small></span>
-                      <span className="history-figures"><b>{fmt(rIn.currentStockLiters)} L</b> stock · {when} · top-up {fmt(out.estimatedTopUpLiters)} L</span>
+                      <span className="history-figures">
+                        <b>{fmt(out.estimatedTopUpLiters)} L top-up</b>
+                        <span className="history-dates">Book by {forecastBy} · no rain {noRainBy}</span>
+                      </span>
                     </button>
                   </li>
                 );

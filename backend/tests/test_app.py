@@ -111,6 +111,26 @@ class ApiHandlerTests(unittest.TestCase):
             status, body = invoke("POST", "/records", {"input": {**INPUT, "collectionEfficiency": 2}})
         self.assertEqual(status, 400)
 
+    def test_save_accepts_a_14_day_forecast_and_keeps_days_8_to_14(self):
+        forecast = [0] * 9 + [20] + [0] * 4
+        table = FakeTable()
+        with patch.object(app, "_get_table", return_value=table):
+            status, body = invoke("POST", "/records", {
+                "building_id": "Late rain",
+                "input": {**INPUT, "forecastMm": forecast},
+                "forecast_source": "Open-Meteo live forecast",
+                "forecast_dates": [f"2026-10-{11 + i:02d}" for i in range(14)],
+            })
+        self.assertEqual(status, 201)
+        self.assertEqual(len(body["item"]["output"]["forecastTimeline"]), 14)
+        self.assertEqual(body["item"]["input"]["forecastMm"], [float(v) for v in forecast])
+        self.assertEqual(len(body["item"]["forecast_dates"]), 14)
+
+    def test_save_rejects_a_15_day_forecast(self):
+        with patch.object(app, "_get_table", return_value=FakeTable()):
+            status, _ = invoke("POST", "/records", {"input": {**INPUT, "forecastMm": [0] * 15}})
+        self.assertEqual(status, 400)
+
     def test_rapid_saves_do_not_collide_and_history_is_newest_first(self):
         table = FakeTable()
         fixed = app.datetime(2026, 10, 10, tzinfo=app.timezone.utc)
@@ -138,6 +158,70 @@ class ApiHandlerTests(unittest.TestCase):
     def test_not_found_route_is_404(self):
         status, body = invoke("GET", "/not-a-route")
         self.assertEqual((status, body["error"]), (404, "Route not found."))
+
+
+class CorsTests(unittest.TestCase):
+    """ALLOWED_ORIGIN (from the AllowedOrigin stack parameter) decides Access-Control-Allow-Origin."""
+
+    def call(self, method, path, origin=None, env=None, body=None):
+        event = {"requestContext": {"http": {"method": method}}, "rawPath": path, "headers": {}}
+        if origin is not None:
+            event["headers"]["origin"] = origin  # API Gateway HTTP API lower-cases header names
+        if body is not None:
+            event["body"] = json.dumps(body)
+        values = {"ALLOWED_ORIGIN": env} if env is not None else {}
+        with patch.dict(os.environ, values, clear=False):
+            if env is None:
+                os.environ.pop("ALLOWED_ORIGIN", None)
+            return app.handler(event, None)
+
+    def test_unset_keeps_open_default_for_hackathon_demo(self):
+        response = self.call("GET", "/health", origin="https://anywhere.example")
+        self.assertEqual(response["headers"]["Access-Control-Allow-Origin"], "*")
+        self.assertNotIn("Vary", response["headers"])
+
+    def test_star_is_open(self):
+        response = self.call("POST", "/simulate", origin="https://x.example", env="*", body=INPUT)
+        self.assertEqual(response["headers"]["Access-Control-Allow-Origin"], "*")
+
+    def test_configured_origin_is_echoed_for_matching_request(self):
+        response = self.call("GET", "/health", origin="https://tankwise.example/", env="https://tankwise.example")
+        self.assertEqual(response["headers"]["Access-Control-Allow-Origin"], "https://tankwise.example")
+        self.assertEqual(response["headers"]["Vary"], "Origin")
+
+    def test_other_origin_gets_configured_origin_so_browsers_refuse_it(self):
+        response = self.call("GET", "/health", origin="https://evil.example", env="https://tankwise.example")
+        self.assertEqual(response["headers"]["Access-Control-Allow-Origin"], "https://tankwise.example")
+
+    def test_no_origin_header_falls_back_to_configured_origin(self):
+        response = self.call("GET", "/health", env="https://tankwise.example")
+        self.assertEqual(response["headers"]["Access-Control-Allow-Origin"], "https://tankwise.example")
+
+    def test_comma_separated_list_echoes_only_listed_origins(self):
+        env = "https://a.example, https://b.example"
+        self.assertEqual(self.call("GET", "/health", origin="https://b.example", env=env)["headers"]["Access-Control-Allow-Origin"],
+                         "https://b.example")
+        self.assertEqual(self.call("GET", "/health", origin="https://c.example", env=env)["headers"]["Access-Control-Allow-Origin"],
+                         "https://a.example")
+
+    def test_preflight_and_error_responses_carry_the_same_policy(self):
+        env = "https://tankwise.example"
+        preflight = self.call("OPTIONS", "/records", origin="https://tankwise.example", env=env)
+        self.assertEqual(preflight["statusCode"], 204)
+        self.assertEqual(preflight["headers"]["Access-Control-Allow-Origin"], "https://tankwise.example")
+        not_found = self.call("GET", "/nope", origin="https://tankwise.example", env=env)
+        self.assertEqual(not_found["statusCode"], 404)
+        self.assertEqual(not_found["headers"]["Access-Control-Allow-Origin"], "https://tankwise.example")
+        bad = self.call("POST", "/simulate", origin="https://tankwise.example", env=env, body={**INPUT, "currentStockLiters": 99999})
+        self.assertEqual(bad["statusCode"], 400)
+        self.assertEqual(bad["headers"]["Access-Control-Allow-Origin"], "https://tankwise.example")
+
+    def test_response_bodies_and_route_contracts_are_unchanged(self):
+        response = self.call("POST", "/simulate", origin="https://tankwise.example", env="https://tankwise.example", body=INPUT)
+        body = json.loads(response["body"])
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(set(body), {"result", "calculatedBy"})
+        self.assertEqual(body["result"]["forecastDeadlineDays"], 3)
 
 
 try:

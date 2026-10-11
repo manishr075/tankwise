@@ -11,7 +11,7 @@ The caretaker or warden of a single hostel, PG or housing building with an overh
 ## What we built
 A web app that answers one question: *by which day must we book the next tanker?*
 - Inputs: water in tank, tank capacity, daily use, roof area, collection efficiency, supplier lead time, safety stock, and location.
-- Live 7-day rainfall from Open-Meteo, clearly labelled live vs example data.
+- Live 14-day daily rainfall from Open-Meteo, clearly labelled live vs example data. Provider errors are shown with Open-Meteo's own reason, and the last valid forecast is kept.
 - A day-by-day water balance (use first, then rain capture, capped at capacity; overflow and shortages tracked separately).
 - A latest safe booking day that accounts for supplier lead time and safety stock, plus an estimated top-up.
 - A saved decision log: the exact inputs and recalculated output for each decision.
@@ -22,7 +22,7 @@ A web app that answers one question: *by which day must we book the next tanker?
 3. **A decision log built for later checking**: each record keeps the inputs, forecast source and dates, so real deliveries can later be compared with what was recommended.
 
 ## AWS services used
-- **Amazon API Gateway (HTTP API)**: `/health`, `/simulate`, `/records`, `/history`, with CORS and throttling.
+- **Amazon API Gateway (HTTP API)**: `/health`, `/simulate`, `/records`, `/history`, with CORS (origin set by `AllowedOrigin`) and throttling.
 - **AWS Lambda (Python 3.12)**: runs the water-balance model. On save it recalculates the result itself instead of trusting the browser.
 - **Amazon DynamoDB**: decision records keyed by building and `timestamp#uuid`, so rapid saves never overwrite each other. Encrypted at rest; Lambda only has `PutItem` and `Query`.
 - **AWS SAM / CloudFormation** for deployment, with **CloudWatch Logs** (14-day retention).
@@ -36,7 +36,7 @@ Other: Open-Meteo forecast API, React + Vite frontend.
 ## Test and demo data
 - Default building ("Sample hostel"): 10,000 L tank, 8,000 L in stock, 1,800 L/day, 120 m² roof, 0.8 efficiency, 2-day lead time, 1,800 L safety stock. **These are example values, not measurements from a real building.**
 - Example rainfall: 0, 0, 20, 10, 0, 0, 0 mm. Known answer: book within 3 days with forecast rain, 1 day with no rain, estimated top-up 3,520 L.
-- Tests: 22 JavaScript engine tests, 26 Python tests (including a moto DynamoDB save/history roundtrip), and a 2,026-scenario JS↔Python parity check.
+- Tests (run 2026-10-11 in a Linux sandbox; see `VALIDATION.md`): 32 JavaScript tests (23 engine, 9 Open-Meteo/AWS client), 37 Python tests including CORS and a moto DynamoDB save/history roundtrip, and a 2,027-scenario JS↔Python parity check.
 
 ## Limitations
 - Daily model only: no hourly demand or rain timing; one efficiency factor for all roof/pipe losses.

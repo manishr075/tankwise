@@ -8,7 +8,7 @@
 
 | Path | What it is |
 | --- | --- |
-| `frontend/` | React + Vite UI. `src/engine.js` is the browser copy of the model; `src/api.js` handles AWS/Open-Meteo calls with timeouts. |
+| `frontend/` | React + Vite UI. `src/engine.js` is the browser copy of the model; `src/api.js` handles AWS/Open-Meteo calls with timeouts, provider error messages and cancellation. |
 | `backend/water_balance.py` | Python model, formula-for-formula identical to `engine.js`. |
 | `backend/app.py` | Lambda routes: `GET /health`, `POST /simulate`, `POST /records`, `GET /history`. |
 | `template.yaml`, `samconfig.toml` | SAM stack: HTTP API (CORS, throttling), Python 3.12 Lambda, DynamoDB (`building_id` + `sort_key`), 14-day logs. |
@@ -20,7 +20,7 @@
 1. Rain capture (L) = rain (mm) × roof area (m²) × collection efficiency (0–1). 1 mm on 1 m² = 1 L before losses.
 2. Each day: subtract demand first, then add rain capture, then cap at tank capacity. Overflow and unmet demand are tracked separately; stock never goes below 0.
 3. **Latest booking day** = the most days you can wait before ordering such that, with the supplier lead time, every day until the tanker arrives ends at or above the safety stock with no unmet demand. An order placed on day *d* arrives at the start of day *d + lead time*, before that day's use. Checked up to 14 days ahead; `null` means it is not safe even if ordered today.
-4. Calculated twice: with forecast rain and with zero rain (stress test). Days beyond the forecast count as 0 mm.
+4. Calculated twice: with forecast rain and with zero rain (stress test). The live forecast is Open-Meteo's 14-day daily precipitation; days after the loaded forecast count as 0 mm. The built-in example rainfall is 7 days.
 5. **Estimated top-up** = target stock (safety stock + 2 days of use, capped at capacity) − projected stock when a tanker booked on the latest safe day arrives. It is not a tanker size; supplier minimum orders are not modelled.
 6. Inputs are rejected if: non-numeric/blank, stock > capacity, efficiency outside 0–1, lead time not a whole number 0–14, safety stock > capacity, rain negative or > 500 mm/day, more than 14 forecast days.
 
@@ -31,7 +31,7 @@ Node.js 20+ and Python 3.12 (Lambda runtime; 3.11+ works for tests).
 ```bash
 cd frontend
 npm install
-npm test           # 22 engine tests
+npm test           # 32 tests: 23 engine tests + 9 Open-Meteo/AWS client tests
 npm run dev        # http://localhost:5173
 ```
 
@@ -66,7 +66,7 @@ sam build                       # needs python3.12 on PATH (or: sam build --use-
 sam deploy --guided             # defaults come from samconfig.toml; confirm the changeset
 ```
 
-Optional: lock CORS to your frontend host with `--parameter-overrides AllowedOrigin=https://your-frontend.example`.
+Optional: lock CORS to your frontend host with `--parameter-overrides AllowedOrigin=https://your-frontend.example` (comma-separate several origins). The `AllowedOrigin` value is passed to the Lambda as `ALLOWED_ORIGIN`, which sets `Access-Control-Allow-Origin` on every response. Unset or `*` keeps the open hackathon default. This takes effect on the next deployment; the current stack has not been redeployed with this change.
 
 **Windows PowerShell helper:** after installing the AWS CLI and SAM CLI, signing in with `aws configure` or `aws sso login`, and ensuring Python 3.12 is available for SAM, run this from the project root:
 
@@ -120,6 +120,8 @@ Lambda keeps only known input fields, **recalculates the output itself** (any cl
 `GET /history?building_id=Sample%20hostel` returns the latest 8 records, newest first. `GET /health` queries the table and returns `503` with a generic message if DynamoDB is unreachable. Server errors never include stack traces or AWS details.
 
 ## Before real use
+
+- Read `docs/aws-hardening-options.md` before any deployment: table retention, point-in-time recovery, budget alerts, API protection and record TTL are proposals that need your approval.
 
 - Replace example values with measured tank readings and real daily use.
 - Check the assumptions with whoever runs the building's water system; consider tanker sizes, emergency supply, hourly demand and roof/pipe losses.

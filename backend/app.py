@@ -24,13 +24,52 @@ def _response(status_code: int, payload: dict[str, Any] | None) -> dict[str, Any
         "statusCode": status_code,
         "headers": {
             "Content-Type": "application/json; charset=utf-8",
-            "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "content-type",
             "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
             "Cache-Control": "no-store",
         },
         "body": "" if payload is None else json.dumps(payload, default=_json_default, separators=(",", ":")),
     }
+
+
+def _allowed_origins() -> list[str]:
+    """Origins from the AllowedOrigin stack parameter (ALLOWED_ORIGIN env var), comma-separated.
+
+    Unset or '*' keeps the open hackathon default. Read on every call so tests can change it.
+    """
+    raw = os.environ.get("ALLOWED_ORIGIN", "*")
+    origins = [item.strip().rstrip("/") for item in raw.split(",") if item.strip()]
+    return origins or ["*"]
+
+
+def _cors_origin(request_origin: str) -> str:
+    """Value for Access-Control-Allow-Origin.
+
+    Echoes the request's Origin only when it is explicitly configured; otherwise returns the
+    first configured origin, so a browser on any other site is refused by CORS.
+    """
+    origins = _allowed_origins()
+    if "*" in origins:
+        return "*"
+    if request_origin and request_origin.rstrip("/") in origins:
+        return request_origin.rstrip("/")
+    return origins[0]
+
+
+def _request_origin(event: dict[str, Any]) -> str:
+    headers = event.get("headers") or {}
+    for key, value in headers.items():
+        if isinstance(key, str) and key.lower() == "origin" and isinstance(value, str):
+            return value.strip()
+    return ""
+
+
+def _with_cors(response: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
+    headers = response.setdefault("headers", {})
+    headers["Access-Control-Allow-Origin"] = _cors_origin(_request_origin(event))
+    if _allowed_origins() != ["*"]:
+        headers["Vary"] = "Origin"
+    return response
 
 
 def _json_default(value: Any) -> Any:
@@ -185,6 +224,10 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
         or "GET"
     ).upper()
     path = (event.get("rawPath") or event.get("path") or "/").rstrip("/") or "/"
+    return _with_cors(_route(event, method, path), event)
+
+
+def _route(event: dict[str, Any], method: str, path: str) -> dict[str, Any]:
     if method == "OPTIONS":
         return _response(204, None)
     try:
