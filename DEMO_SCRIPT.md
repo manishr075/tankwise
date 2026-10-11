@@ -11,7 +11,7 @@
 Point at the big headline ("Book the next tanker by …") and the four cards: water in tank now, latest booking day with forecast rain, the no-rain date, and the estimated top-up. Point at the small line "Calculated by AWS Lambda (ap-south-1)".
 
 **0:40–1:05 · Live weather**
-In *Rain forecast location*, click **Load live 7-day rainfall**. Show the source chip change from "Example rainfall (not live)" to "Open-Meteo live forecast · fetched hh:mm" and the headline update.
+In *Rain forecast location*, click **Load live 14-day rainfall**. Show the source chip change from "Example rainfall (not live)" to "Open-Meteo live forecast · fetched hh:mm" and the headline update.
 
 **1:05–1:35 · Differentiator: no-rain stress test**
 Switch the timeline between **With forecast rain** and **No-rain stress test**. Show the "Last day to book" and "Tanker arrives" markers and the dashed safety-stock line. "Rain buys N days, but if it doesn't come, this is the date that matters. Collected rain isn't assumed drinkable."

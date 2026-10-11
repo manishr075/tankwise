@@ -1,56 +1,46 @@
-# Validation status — final checklist
+# Validation status
 
-Last run: 2026-10-10, Windows dev VM, Node 20.19.0, Python 3.13 (tests) + 3.12 (SAM build), SAM CLI 1.168.0.
+Last run: 2026-10-11, Linux sandbox (no AWS access), Node 22.22.3, Python 3.11.2 with a local venv for `backend/requirements-dev.txt` (boto3 + moto) and `cfn-lint`. No AWS CLI or SAM CLI was available, so no template build or deployment was run.
 
-## Verified (actually run)
+Earlier run (2026-10-10, Windows dev VM, Node 20.19.0, Python 3.13/3.12, SAM CLI 1.168.0) is summarised at the end. Its AWS and deployment checkboxes were never run against a real account.
 
-- [x] Frontend engine tests: `npm test` → **22 passed, 0 failed** (formula, demand-before-rain, overflow, known answer, lead time 0, already below reserve, safety above stock, empty forecast, rain vs no-rain, extreme rain + 14-day cap, demand > stock, rounding, invalid inputs).
-- [x] Backend tests: `cd backend && python -m unittest discover -s tests -v` → **26 passed** in the original Windows dev environment when `backend/requirements-dev.txt` is installed (engine edge cases; API routes, CORS preflight, invalid/oversized JSON, server-side recalculation and input whitelisting, rapid-save collision resistance, newest-first history, error sanitising, 404s; moto DynamoDB health → save → history roundtrip).
-- [x] JS ↔ Python parity: `python scripts/check_parity.py` → identical output on **2,026 scenarios** (26 named edge cases, 1,803 valid random, 223 invalid with identical error messages). Known answer: 3 days / 1 day no-rain / 3,520 L top-up.
-- [x] Frontend production build: `npm run build` succeeds.
-- [x] `sam validate --lint`: valid SAM template. `sam build`: succeeds with Python 3.12 on PATH.
-- [x] Browser checks (Chromium, 1440 px and 390 px widths): no horizontal overflow, no page errors.
-- [x] Preview mode: header says "Preview mode · no AWS configured"; save shows "Saved in this browser only (localStorage). This is not an AWS save."; record survives reload, badged "Browser"; reopening it restores inputs.
-- [x] Connected path against `scripts/local_api.py` (real Lambda handler, in-memory table, **not AWS**): health → "Local API mock · not AWS"; simulate; two saves → two distinct history rows newest first; "Last API call" line shows method, path, status, latency.
-- [x] Stale-data guard: editing an input shows "Inputs changed…" and disables Save until Recalculate; summary cards keep showing the last calculated inputs.
-- [x] Invalid input (efficiency 1.5) → clear error, previous valid plan stays visible.
-- [x] Live Open-Meteo forecast loaded in the browser for 12.97, 77.59; source chip switched to "Open-Meteo live forecast · fetched hh:mm" and the plan recalculated.
-- [x] Weather outage (requests blocked) → "Live forecast unavailable … Still using: <previous source>"; previous rainfall kept.
-- [x] API outage (requests blocked) → "AWS API offline"; Save falls back to "Browser-only save · not AWS".
+## Verified in this session
+
+| Check | Command | Result |
+|---|---|---|
+| Frontend tests | `cd frontend && npm test` | **32 pass, 0 fail**: 23 engine tests (including days 8–14), 9 Open-Meteo/AWS client tests (14-day request, null handling, provider error reasons, malformed bodies, >14 days, network failure, cancellation) |
+| Frontend build | `cd frontend && npm run build` | Succeeds |
+| Backend tests | `cd backend && python -m unittest discover -s tests -v` (venv with `requirements-dev.txt`) | **37 run, OK**: includes 8 CORS tests, 2 new 14-day save tests, and the moto DynamoDB save/history roundtrip (previously skipped without moto) |
+| JS ↔ Python parity | `python scripts/check_parity.py` | **PASS on 2,027 scenarios**: 27 named edge cases (including late rain on days 8–14), 1,804 valid, 223 rejected with identical messages |
+| CloudFormation lint | `cfn-lint template.yaml` | No findings (exit 0). This is not `sam validate`. |
+| Browser: layout | Headless Chromium, desktop 1440 px and mobile 390 px | Both render with **0 px horizontal overflow**. Screenshots were reviewed and drove the Stage 1 spacing fixes. |
+| Browser: history rows | Local API mock (`scripts/local_api.py`, labelled not AWS) | Saved record shows the top-up and **both** booking dates (forecast and no rain). Header reads "Local API mock · not AWS". |
+| Browser: 14-day live forecast | Open-Meteo responses **mocked** in the browser (the sandbox cannot reach Open-Meteo) | Request uses `forecast_days=14`; timeline shows 14 rows; success message is correct. A mocked 400 shows Open-Meteo's reason and keeps the previous forecast. |
+| Browser: stale calculation race | Local API mock with the 5,000 L request artificially delayed, then "Reset example" | **Pre-fix build** shows a stale 5,000 L plan while the input box says 8,000 L. **Fixed build** shows 8,000 L. |
+
+Note on the race test: the Recalculate button is disabled while a calculation runs, so the overlap happens through "Reset example" and the health-check path. The fix covers those paths.
 
 ## Not verified
 
-- [ ] Real AWS deployment (`sam deploy`), API Gateway URL, Lambda execution in AWS, and DynamoDB writes/reads. No AWS credentials were available, so nothing was deployed. **Do not claim AWS is live until you complete the steps below.**
-- [ ] CORS from a hosted frontend origin to the deployed API (tested only against the local mock).
-- [ ] The "degraded" state (API up, DynamoDB down) in a real browser — covered by unit tests only.
-- [ ] Hosting the built frontend on a public URL.
-- [ ] Screen-reader testing (labels, roles and keyboard focus are in place but not tested with assistive tech).
+- [ ] **Real AWS deployment.** Nothing was deployed or changed in AWS. The Lambda CORS change and the new `ALLOWED_ORIGIN` environment variable are in the code and template only.
+- [ ] **CORS against the deployed API.** Tested by unit tests only. After the next deploy, check the response headers with `curl -i -H "Origin: https://your-frontend" <api>/health`. Also confirm there is no duplicate `Access-Control-Allow-Origin` header: API Gateway's own CORS settings may also add one.
+- [ ] **Live Open-Meteo call.** The sandbox does not allow `api.open-meteo.com`. The 14-day request format follows the Open-Meteo documentation (`forecast_days` up to 16), but the live response has not been observed.
+- [ ] **`sam validate --lint` and `sam build`.** SAM CLI was not installed.
+- [ ] **`deploy-tankwise.ps1`.** PowerShell and AWS credentials were not available.
+- [ ] **Screen-reader testing.** Labels, roles, and keyboard focus are in place. No assistive technology was used.
+- [ ] **Hosted frontend.** Not deployed.
 
-## Requires your action
-
-1. On your own machine with AWS access: `aws configure` (or `aws sso login`), install SAM CLI and Python 3.12.
-2. On Windows, from the repo root, run `.\deploy-tankwise.ps1` after AWS CLI/SAM/Python 3.12 are installed and AWS authentication works. Otherwise run `sam validate --lint`, `sam build`, and `sam deploy --guided` from the repo root (region `ap-south-1`, stack `tankwise-hackathon`; review the changeset).
-3. `curl <TankwiseHealthUrl>` → must return `"storage": "dynamodb"`.
-4. `frontend/.env.local`: `VITE_API_BASE_URL=<TankwiseApiUrl>` (no trailing slash), then `npm run dev` (or build and host `frontend/dist/`; then redeploy with `AllowedOrigin=<your frontend URL>`).
-5. In the app: confirm "AWS + DynamoDB connected · ap-south-1", click Save, confirm the record appears under "Saved decisions · Amazon DynamoDB" (optionally in the DynamoDB console).
-6. Record the demo (`DEMO_SCRIPT.md`) and edit `SUBMISSION_DRAFT.md` (AI-tools line, [AFTER DEPLOY] line).
-7. After judging: `sam delete --stack-name tankwise-hackathon --region ap-south-1` to stop charges.
-
-## Commands to re-run everything
-
-Run these from the project root, one section at a time:
+## How to re-run
 
 ```bash
-cd frontend
-npm install
-npm test
-npm run build
+cd frontend && npm install && npm test && npm run build
 cd ..
 python -m pip install -r backend/requirements-dev.txt
-cd backend
-python -m unittest discover -s tests -v
-cd ..
+cd backend && python -m unittest discover -s tests -v && cd ..
 python scripts/check_parity.py
-sam validate --lint
-sam build
+cfn-lint template.yaml   # optional; or: sam validate --lint
 ```
+
+## Earlier run (2026-10-10, Windows dev VM)
+
+That run reported 22 engine tests, 26 backend tests, a 2,026-scenario parity check, a successful frontend build, `sam validate --lint`, and `sam build` with Python 3.12. It also included browser checks against the local mock and a live Open-Meteo request from the developer machine. It did not include any AWS deployment. The 7-day forecast and the earlier CORS behaviour described there have since changed.
