@@ -85,6 +85,18 @@ class WaterBalanceTests(unittest.TestCase):
         self.assertTrue(all(d["stockAfterLiters"] >= 0 for d in r["forecastTimeline"]))
         self.assertIsNone(r["forecastDeadlineDays"])
 
+    def test_days_8_to_14_extend_the_window_and_are_not_dropped(self):
+        late = [0] * 9 + [20] + [0] * 4  # 20 mm on day 10 = 1,920 L
+        tank = {"currentStockLiters": 8000, "dailyConsumptionLiters": 500, "leadTimeDays": 0, "safetyStockLiters": 1800}
+        full = run(**tank, forecastMm=late)
+        cut_at_7 = run(**tank, forecastMm=late[:7])
+        self.assertEqual(len(full["forecastTimeline"]), 14)
+        self.assertEqual(full["forecastTimeline"][9]["potentialHarvestLiters"], 1920)
+        self.assertEqual(cut_at_7["noRainDeadlineDays"], 12)
+        self.assertEqual(full["forecastDeadlineDays"], 14)
+        self.assertEqual(cut_at_7["forecastDeadlineDays"], 12)
+        self.assertEqual(full["noRainDeadlineDays"], 12)
+
     def test_round_half_up(self):
         self.assertEqual(round2(0.125), 0.13)
         self.assertEqual(round2(1.004), 1)

@@ -30,22 +30,42 @@ export async function apiRequest(path, { method = 'GET', body, timeoutMs = 12000
   return { ok: response.ok, status: response.status, data, ms: Math.round(performance.now() - started) };
 }
 
+export const FORECAST_DAYS = 14;
+
+// Open-Meteo returns 400 with a { error, reason } body for bad parameters;
+// surface that reason instead of a bare status code.
+async function openMeteoError(response) {
+  try {
+    const body = await response.json();
+    if (body?.reason) return `Open-Meteo returned HTTP ${response.status}: ${body.reason}`;
+  } catch { /* body is not JSON */ }
+  return `Open-Meteo returned HTTP ${response.status}`;
+}
+
 export async function fetchRainForecast(latitude, longitude) {
   const url = new URL('https://api.open-meteo.com/v1/forecast');
   url.search = new URLSearchParams({
     latitude: String(latitude),
     longitude: String(longitude),
     daily: 'precipitation_sum',
-    forecast_days: '7',
+    forecast_days: String(FORECAST_DAYS),
     timezone: 'auto',
   }).toString();
   const response = await fetchWithTimeout(url, {}, 10000);
-  if (!response.ok) throw new Error(`Open-Meteo returned HTTP ${response.status}`);
-  const body = await response.json();
+  if (!response.ok) throw new Error(await openMeteoError(response));
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error('Open-Meteo returned a response that could not be read');
+  }
   const rainfall = body?.daily?.precipitation_sum;
   const dates = body?.daily?.time;
   if (!Array.isArray(rainfall) || !Array.isArray(dates) || rainfall.length === 0 || rainfall.length !== dates.length) {
     throw new Error('Open-Meteo did not return daily precipitation');
+  }
+  if (rainfall.length > FORECAST_DAYS) {
+    throw new Error(`Open-Meteo returned ${rainfall.length} days; expected at most ${FORECAST_DAYS}`);
   }
   const missing = rainfall.filter((value) => value === null || value === undefined).length;
   return {

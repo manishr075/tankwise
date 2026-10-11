@@ -111,6 +111,26 @@ class ApiHandlerTests(unittest.TestCase):
             status, body = invoke("POST", "/records", {"input": {**INPUT, "collectionEfficiency": 2}})
         self.assertEqual(status, 400)
 
+    def test_save_accepts_a_14_day_forecast_and_keeps_days_8_to_14(self):
+        forecast = [0] * 9 + [20] + [0] * 4
+        table = FakeTable()
+        with patch.object(app, "_get_table", return_value=table):
+            status, body = invoke("POST", "/records", {
+                "building_id": "Late rain",
+                "input": {**INPUT, "forecastMm": forecast},
+                "forecast_source": "Open-Meteo live forecast",
+                "forecast_dates": [f"2026-10-{11 + i:02d}" for i in range(14)],
+            })
+        self.assertEqual(status, 201)
+        self.assertEqual(len(body["item"]["output"]["forecastTimeline"]), 14)
+        self.assertEqual(body["item"]["input"]["forecastMm"], [float(v) for v in forecast])
+        self.assertEqual(len(body["item"]["forecast_dates"]), 14)
+
+    def test_save_rejects_a_15_day_forecast(self):
+        with patch.object(app, "_get_table", return_value=FakeTable()):
+            status, _ = invoke("POST", "/records", {"input": {**INPUT, "forecastMm": [0] * 15}})
+        self.assertEqual(status, 400)
+
     def test_rapid_saves_do_not_collide_and_history_is_newest_first(self):
         table = FakeTable()
         fixed = app.datetime(2026, 10, 10, tzinfo=app.timezone.utc)

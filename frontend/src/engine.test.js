@@ -87,6 +87,19 @@ test('demand exceeding stock creates unmet demand, never negative stock', () => 
   assert.equal(r.forecastDeadlineDays, null);
 });
 
+test('days 8-14 of a 14-day forecast change the booking window; a 7-day cut-off would ignore them', () => {
+  const late = [0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0]; // 20 mm on day 10 = 1,920 L
+  const tank = { currentStockLiters: 8000, dailyConsumptionLiters: 500, leadTimeDays: 0, safetyStockLiters: 1800 };
+  const full = run({ ...tank, forecastMm: late });
+  const cutAt7 = run({ ...tank, forecastMm: late.slice(0, 7) });
+  assert.equal(full.forecastTimeline.length, 14);
+  assert.equal(full.forecastTimeline[9].potentialHarvestLiters, 1920);
+  assert.equal(cutAt7.noRainDeadlineDays, 12); // no rain: stock first drops below 1,800 L on day 13
+  assert.equal(full.forecastDeadlineDays, 14); // day-10 rain keeps every day through day 14 above the buffer
+  assert.equal(cutAt7.forecastDeadlineDays, 12);
+  assert.equal(full.noRainDeadlineDays, 12);
+});
+
 test('rounding is half-up to 2 dp', () => {
   assert.equal(round2(0.125), 0.13);
   assert.equal(round2(1.004), 1);

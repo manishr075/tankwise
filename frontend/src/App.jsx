@@ -4,7 +4,7 @@ import {
   Droplets, History, LoaderCircle, MapPin, RefreshCw, Save, ShieldCheck, Truck, Waves,
 } from 'lucide-react';
 import { DEFAULT_INPUTS, simulateWaterBalance, upcomingDates, validateInputs } from './engine.js';
-import { API_BASE_URL, apiRegion, apiRequest, fetchRainForecast } from './api.js';
+import { API_BASE_URL, FORECAST_DAYS, apiRegion, apiRequest, fetchRainForecast } from './api.js';
 import { dateAt, dayLabel, days, fmt, fmtOne, relativeDay, shortDate } from './format.js';
 
 const HISTORY_KEY = 'tankwise-preview-history-v2';
@@ -191,7 +191,9 @@ export default function App() {
       const total = forecast.rainfallMm.reduce((sum, mm) => sum + mm, 0);
       setWeather({
         state: 'ok',
-        message: `Loaded ${forecast.dates.length} days (${fmtOne(total)} mm total)${forecast.missingDays ? `; ${forecast.missingDays} missing day(s) treated as 0 mm` : ''}.`,
+        message: `Loaded ${forecast.dates.length}-day forecast (${fmtOne(total)} mm total)`
+          + (forecast.dates.length < FORECAST_DAYS ? `; Open-Meteo returned fewer than ${FORECAST_DAYS} days, so later days count as 0 mm` : '')
+          + (forecast.missingDays ? `; ${forecast.missingDays} missing day(s) treated as 0 mm` : '') + '.',
       });
       await calculate(nextInputs, { dates: forecast.dates, source, ready: cloudReady });
     } catch (weatherError) {
@@ -396,10 +398,10 @@ export default function App() {
               </div>
               <button type="button" className="button button-secondary button-full" onClick={loadWeather} disabled={weather.state === 'loading' || busyCalculate}>
                 {weather.state === 'loading' ? <LoaderCircle className="spin" size={16} aria-hidden="true" /> : <CloudRain size={16} aria-hidden="true" />}
-                {weather.state === 'loading' ? 'Loading forecast…' : 'Load live 7-day rainfall'}
+                {weather.state === 'loading' ? 'Loading forecast…' : 'Load live 14-day rainfall'}
               </button>
               <p className={`inline-status ${weather.state}`} role="status">{weather.message || `Using: ${forecastSource}`}</p>
-              <p className="subtle-note">Daily precipitation from Open-Meteo. Days beyond the forecast count as 0 mm.</p>
+              <p className="subtle-note">Daily precipitation from Open-Meteo (14-day forecast). Days beyond day 14 count as 0 mm.</p>
             </fieldset>
             <button type="submit" className="button button-primary button-full" disabled={busyCalculate}>
               {busyCalculate ? <LoaderCircle className="spin" size={16} aria-hidden="true" /> : <Activity size={16} aria-hidden="true" />}
