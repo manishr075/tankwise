@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchRainForecast, FORECAST_DAYS } from './api.js';
+import { apiRequest, fetchRainForecast, FORECAST_DAYS } from './api.js';
 
 // Replace global fetch for one test; restores the original afterwards.
 async function withFetch(handler, fn) {
@@ -75,4 +75,29 @@ test('a network failure is reported without throwing an unhandled error', async 
   await withFetch(async () => { throw new TypeError('Failed to fetch'); }, async () => {
     await assert.rejects(fetchRainForecast(1, 1), /network error/);
   });
+});
+
+test('a caller-cancelled AWS request is reported as cancelled, not as a timeout or outage', async () => {
+  const controller = new AbortController();
+  await withFetch((_url, options) => new Promise((_, reject) => {
+    options.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+  }), async () => {
+    const pending = apiRequest('/simulate', { method: 'POST', body: {}, signal: controller.signal });
+    controller.abort();
+    await assert.rejects(pending, /request cancelled/);
+  });
+});
+
+test('an already-aborted signal cancels before the request is sent', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let sent = false;
+  await withFetch(async (_url, options) => {
+    sent = true;
+    if (options.signal.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+    return okJson({});
+  }, async () => {
+    await assert.rejects(apiRequest('/health', { signal: controller.signal }), /request cancelled/);
+  });
+  assert.equal(sent, true); // fetch is called but immediately aborted; no response is applied
 });

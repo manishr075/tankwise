@@ -6,7 +6,7 @@ Parameters:
   AllowedOrigin:
     Type: String
     Default: '*'
-    Description: Browser origin allowed by CORS (e.g. https://your-frontend.example). '*' is fine for a hackathon demo.
+    Description: Browser origin allowed by CORS (e.g. https://your-frontend.example). Comma-separate several origins. '*' is fine for a hackathon demo. Also passed to the Lambda as ALLOWED_ORIGIN.
 
 Globals:
   Function:
@@ -41,6 +41,7 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref WaterPlanTable
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
       Policies:
         - Version: '2012-10-17'
           Statement:

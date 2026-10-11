@@ -8,22 +8,29 @@ export function apiRegion(url = API_BASE_URL) {
 async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const external = options.signal; // caller-supplied cancellation (e.g. a superseded calculation)
+  const cancel = () => controller.abort();
+  if (external?.aborted) controller.abort();
+  external?.addEventListener('abort', cancel);
   try {
     return await fetch(url, { ...options, signal: controller.signal });
   } catch (error) {
+    if (external?.aborted) throw new Error('request cancelled');
     throw new Error(error.name === 'AbortError' ? 'request timed out' : 'network error (service unreachable)');
   } finally {
     clearTimeout(timer);
+    external?.removeEventListener('abort', cancel);
   }
 }
 
 // Returns { ok, status, data, ms }. Throws only on network failure / timeout.
-export async function apiRequest(path, { method = 'GET', body, timeoutMs = 12000 } = {}) {
+export async function apiRequest(path, { method = 'GET', body, timeoutMs = 12000, signal } = {}) {
   const started = performance.now();
   const response = await fetchWithTimeout(`${API_BASE_URL}${path}`, {
     method,
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
   }, timeoutMs);
   let data = null;
   try { data = await response.json(); } catch { data = null; }

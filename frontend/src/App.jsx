@@ -75,6 +75,8 @@ export default function App() {
   const [history, setHistory] = useState(() => (API_BASE_URL ? [] : readLocalHistory()));
   const [historyState, setHistoryState] = useState(API_BASE_URL ? 'idle' : 'browser');
   const [activeTab, setActiveTab] = useState('forecast');
+  const calcSeq = useRef(0);
+  const calcAbort = useRef(null);
 
   const cloudReady = apiStatus === 'connected' || apiStatus === 'local-mock';
   const update = (key, value) => setInputs((prev) => ({ ...prev, [key]: value }));
@@ -106,6 +108,13 @@ export default function App() {
 
   // Runs the model via AWS Lambda when connected, otherwise in the browser.
   const calculate = useCallback(async (nextInputs, { dates, source, ready, quiet = false } = {}) => {
+    // Newer calculations supersede older ones: abort the in-flight request and ignore late replies.
+    const seq = calcSeq.current + 1;
+    calcSeq.current = seq;
+    calcAbort.current?.abort();
+    const controller = new AbortController();
+    calcAbort.current = controller;
+    const isCurrent = () => seq === calcSeq.current;
     setBusyCalculate(true);
     setError('');
     if (!quiet) setNotice('');
@@ -115,25 +124,29 @@ export default function App() {
       let calculatedBy = 'browser';
       if (ready) {
         try {
-          const response = await apiRequest('/simulate', { method: 'POST', body: nextInputs });
+          const response = await apiRequest('/simulate', { method: 'POST', body: nextInputs, signal: controller.signal });
+          if (!isCurrent()) return false;
           recordCloud('POST', '/simulate', response, response.ok ? 'calculated by Lambda' : '');
           if (response.status === 400) throw Object.assign(new Error(errorText(response, 'Invalid input')), { validation: true });
           if (!response.ok || !response.data?.result) throw new Error(errorText(response, 'Simulation failed'));
           result = response.data.result;
           calculatedBy = response.data.calculatedBy === 'aws-lambda' ? 'aws-lambda' : 'local-mock';
         } catch (cloudError) {
+          if (!isCurrent()) return false;
           if (cloudError.validation) throw cloudError;
           setApiStatus('offline');
           setNotice(`AWS calculation failed (${cloudError.message}). Showing the browser calculation instead; saves are browser-only until AWS reconnects.`);
         }
       }
+      if (!isCurrent()) return false;
       setPlan({ inputs: nextInputs, dates, source, result, calculatedBy });
       return true;
     } catch (calculationError) {
+      if (!isCurrent()) return false;
       setError(`${calculationError.message || 'Could not calculate this scenario.'} The plan below still shows the last valid calculation.`);
       return false;
     } finally {
-      setBusyCalculate(false);
+      if (isCurrent()) setBusyCalculate(false);
     }
   }, []);
 
