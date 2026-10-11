@@ -325,7 +325,7 @@ export default function App() {
           {inputsAreDirty && <div className="dirty-note" role="status"><Activity size={14} aria-hidden="true" /> Inputs changed. These numbers are for the previous inputs. Press <b>Recalculate</b> to update them.</div>}
           <div className="decision-topline">
             <span className={`urgency-tag ${result.urgency}`}><UrgencyIcon size={14} aria-hidden="true" /> {urgencyLabel}</span>
-            <span className="calc-by">{plan.calculatedBy === 'aws-lambda' ? `Calculated by AWS Lambda${REGION ? ` (${REGION})` : ''}` : plan.calculatedBy === 'local-mock' ? 'Calculated by local API mock (not AWS)' : 'Calculated in this browser'}</span>
+            <span className="calc-by" role="status">{busyCalculate ? 'Recalculating…' : plan.calculatedBy === 'aws-lambda' ? `Calculated by AWS Lambda${REGION ? ` (${REGION})` : ''}` : plan.calculatedBy === 'local-mock' ? 'Calculated by local API mock (not AWS)' : 'Calculated in this browser'}</span>
           </div>
           <h1 id="decision-heading">{headline}</h1>
           <p className="decision-copy">{result.recommendation}</p>
@@ -481,13 +481,18 @@ export default function App() {
                 const out = record.output || {};
                 const rIn = record.input || {};
                 const dates = record.forecast_dates?.length ? record.forecast_dates : upcomingDates(7, new Date(record.created_at));
-                const when = out.forecastDeadlineDays === null || out.forecastDeadlineDays === undefined ? 'book now' : `book by ${dayLabel(dates, out.forecastDeadlineDays)}`;
+                const deadlineText = (value) => (value === null || value === undefined ? 'Now' : value >= max ? `${max}+ days` : dayLabel(dates, value));
+                const forecastBy = deadlineText(out.forecastDeadlineDays);
+                const noRainBy = deadlineText(out.noRainDeadlineDays);
                 return (
                   <li key={record.record_id || record.created_at}>
                     <button type="button" className="history-item" onClick={() => loadScenario(record)}>
                       <span className={`storage-badge ${record.storage === 'browser' ? 'browser' : 'cloud'}`}>{{ browser: 'Browser', 'local-mock': 'Local mock' }[record.storage] || 'DynamoDB'}</span>
                       <span className="history-main"><strong>{record.building_id || rIn.buildingName || 'Saved plan'}</strong><small>{new Date(record.created_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })} · {String(record.forecast_source || '').split(' · ')[0]}</small></span>
-                      <span className="history-figures"><b>{fmt(rIn.currentStockLiters)} L</b> stock · {when} · top-up {fmt(out.estimatedTopUpLiters)} L</span>
+                      <span className="history-figures">
+                        <b>{fmt(out.estimatedTopUpLiters)} L top-up</b>
+                        <span className="history-dates">Book by {forecastBy} · no rain {noRainBy}</span>
+                      </span>
                     </button>
                   </li>
                 );
